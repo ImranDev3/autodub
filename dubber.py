@@ -1,25 +1,23 @@
 """
 Auto Dubbing Engine
 -------------------
-এক লাইনে: ভিডিও দিন -> বাংলা (বা অন্য ভাষায়) ডাব করা ভিডিও পান।
+Give it a video, get it back dubbed in Bengali (or any supported language).
 
-পাইপলাইন:
-  1. FFmpeg দিয়ে ভিডিও থেকে অডিও বের করা
-  2. Gemini দিয়ে টাইমস্ট্যাম্প সহ ট্রান্সক্রাইব + অনুবাদ (এক কলেই)
-  3. Gemini TTS দিয়ে প্রতিটি সেগমেন্টের ভয়েস তৈরি
-  4. প্রতিটি সেগমেন্ট তার নিজের সময়ের ভেতর ফিট করা (atempo)
-  5. টাইমলাইন বানিয়ে আসল অডিওর উপর বসানো + ভিডিওর সাথে জোড়া
+Pipeline:
+  1. Extract audio from the video with FFmpeg
+  2. Transcribe with timestamps AND translate, in a single Gemini call
+  3. Synthesize speech for each segment with Gemini TTS
+  4. Fit each segment into its original time slot (atempo)
+  5. Assemble the timeline and mux it over the original video
 
-শুধু একটাই API key লাগে: GEMINI_API_KEY
+Only one credential is required: GEMINI_API_KEY
 """
 
 import base64
 import json
-import math
 import os
 import re
 import shutil
-import struct
 import subprocess
 import tempfile
 import time
@@ -31,12 +29,12 @@ import requests
 # ---------------------------------------------------------------- config
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-MODEL_UNDERSTAND = "gemini-2.5-flash"          # শোনা + অনুবাদ (সস্তা, দ্রুত)
-MODEL_TTS = "gemini-2.5-flash-preview-tts"     # ভয়েস তৈরি
+MODEL_UNDERSTAND = "gemini-2.5-flash"          # listen + translate (cheap, fast)
+MODEL_TTS = "gemini-2.5-flash-preview-tts"     # speech synthesis
 
 TTS_SAMPLE_RATE = 24000
 
-# ভাষার তালিকা — চাইলে বাড়াতে পারেন
+# Supported target languages — extend freely
 LANGUAGES = {
     "bn": "Bengali (Bangla)",
     "en": "English",
@@ -50,7 +48,7 @@ LANGUAGES = {
     "ja": "Japanese",
 }
 
-# Gemini prebuilt ভয়েস
+# Gemini prebuilt voices (30 are available; these are a curated subset)
 VOICES = {
     "male_warm": "Charon",
     "male_clear": "Orus",
@@ -62,29 +60,29 @@ DEFAULT_VOICE = "Charon"
 
 
 class DubError(Exception):
-    pass
+    """Raised for any recoverable failure the user should see."""
 
 
 def _api_key():
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
-        raise DubError("GEMINI_API_KEY সেট করা নেই। .env ফাইলে যোগ করুন।")
+        raise DubError("GEMINI_API_KEY is not set. Add it to your .env file.")
     return key
 
 
 def _run(cmd):
-    """FFmpeg কমান্ড চালায়, সমস্যা হলে পরিষ্কার এরর দেয়।"""
+    """Run an FFmpeg command, surfacing a readable error on failure."""
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         tail = (proc.stderr or "")[-800:]
-        raise DubError(f"FFmpeg ব্যর্থ: {' '.join(cmd[:4])}...\n{tail}")
+        raise DubError(f"FFmpeg failed: {' '.join(cmd[:4])}...\n{tail}")
     return proc
 
 
 # ---------------------------------------------------------------- step 1
 
 def extract_audio(video_path, out_wav):
-    """ভিডিও থেকে 16kHz mono WAV — Gemini এর জন্য আদর্শ ফরম্যাট।"""
+    """Pull a 16 kHz mono WAV out of the video — the ideal input for Gemini."""
     _run([
         "ffmpeg", "-y", "-i", str(video_path),
         "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
@@ -94,6 +92,7 @@ def extract_audio(video_path, out_wav):
 
 
 def media_duration(path):
+    """Duration in seconds, or 0.0 if it can't be determined."""
     proc = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
@@ -131,11 +130,16 @@ Return ONLY valid JSON, no markdown fence, in exactly this shape:
 
 
 def transcribe_and_translate(wav_path, target_lang="bn", log=print):
-    """এক কলেই: শোনা -> টাইমস্ট্যাম্প -> অনুবাদ। খরচ কম, কারণ দুইটা ধাপ একসাথে।"""
+    """
+    Listen, timestamp and translate in one call.
+
+    Doing both in a single pass — rather than transcribing, then sending the
+    text back for translation — roughly halves cost and latency.
+    """
     target_name = LANGUAGES.get(target_lang, target_lang)
     audio_b64 = base64.b64encode(Path(wav_path).read_bytes()).decode()
 
-    log(f"অডিও পাঠানো হচ্ছে ({len(audio_b64) // 1400} KB)...")
+    log(f"Uploading audio ({len(audio_b64) // 1400} KB)...")
 
     body = {
         "contents": [{
@@ -156,7 +160,7 @@ def transcribe_and_translate(wav_path, target_lang="bn", log=print):
     parsed = json.loads(_strip_fence(raw))
     segments = parsed.get("segments", [])
 
-    # পরিষ্কার করা: খালি সেগমেন্ট বাদ, সময় অনুযায়ী সাজানো, ওভারল্যাপ ঠিক করা
+    # Clean up: drop empties, sort by time, resolve overlaps
     clean = []
     for seg in segments:
         text = (seg.get("text") or "").strip()
@@ -178,13 +182,14 @@ def transcribe_and_translate(wav_path, target_lang="bn", log=print):
             clean[i]["end"] = clean[i + 1]["start"]
 
     if not clean:
-        raise DubError("অডিওতে কোনো কথা পাওয়া যায়নি।")
+        raise DubError("No speech was found in this audio.")
 
-    log(f"{len(clean)} টি সেগমেন্ট পাওয়া গেছে।")
+    log(f"Found {len(clean)} segments.")
     return clean
 
 
 def _strip_fence(text):
+    """Remove a ```json ... ``` wrapper if the model added one."""
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n", "", text)
@@ -193,7 +198,7 @@ def _strip_fence(text):
 
 
 def _post(url, body, timeout=180, retries=4):
-    """রেট লিমিট আর সাময়িক এররে নিজে থেকে আবার চেষ্টা করে।"""
+    """POST with exponential backoff on rate limits and transient errors."""
     headers = {"x-goog-api-key": _api_key(), "Content-Type": "application/json"}
     last = None
     for attempt in range(retries):
@@ -202,21 +207,20 @@ def _post(url, body, timeout=180, retries=4):
             if resp.status_code == 200:
                 return resp.json()
             if resp.status_code in (429, 500, 502, 503, 504):
-                wait = 2 ** attempt * 3
-                time.sleep(wait)
+                time.sleep(2 ** attempt * 3)
                 last = f"HTTP {resp.status_code}: {resp.text[:300]}"
                 continue
-            raise DubError(f"API এরর {resp.status_code}: {resp.text[:400]}")
+            raise DubError(f"API error {resp.status_code}: {resp.text[:400]}")
         except requests.RequestException as exc:
             last = str(exc)
             time.sleep(2 ** attempt * 2)
-    raise DubError(f"API বারবার ব্যর্থ হয়েছে: {last}")
+    raise DubError(f"API kept failing: {last}")
 
 
 # ---------------------------------------------------------------- step 3
 
 def synthesize_segment(text, voice, out_wav):
-    """Gemini TTS -> raw PCM -> WAV ফাইল।"""
+    """Gemini TTS -> raw PCM -> WAV file."""
     body = {
         "contents": [{"parts": [{"text": text}]}],
         "generationConfig": {
@@ -234,7 +238,7 @@ def synthesize_segment(text, voice, out_wav):
         part = data["candidates"][0]["content"]["parts"][0]
         pcm = base64.b64decode(part["inlineData"]["data"])
     except (KeyError, IndexError) as exc:
-        raise DubError(f"TTS থেকে অডিও আসেনি: {exc}")
+        raise DubError(f"TTS returned no audio: {exc}")
 
     with wave.open(str(out_wav), "wb") as wf:
         wf.setnchannels(1)
@@ -248,9 +252,10 @@ def synthesize_segment(text, voice, out_wav):
 
 def fit_to_slot(in_wav, out_wav, slot_seconds, max_speedup=1.6):
     """
-    সেগমেন্টের অডিওকে তার নির্ধারিত সময়ের ভেতর ফিট করা।
-    বেশি লম্বা হলে একটু দ্রুত করা হয় — কিন্তু ১.৬x এর বেশি নয়,
-    নইলে শুনতে রোবটের মতো লাগে।
+    Squeeze a synthesized segment into the time slot it belongs to.
+
+    Overlong audio is sped up — but never past 1.6x, beyond which speech
+    starts to sound robotic. Audio that already fits is left untouched.
     """
     actual = media_duration(in_wav)
     if actual <= 0 or slot_seconds <= 0.3:
@@ -260,13 +265,12 @@ def fit_to_slot(in_wav, out_wav, slot_seconds, max_speedup=1.6):
     ratio = actual / slot_seconds
 
     if ratio <= 1.02:
-        # সময়ের ভেতরেই আছে — কিছু করার দরকার নেই
         shutil.copy(in_wav, out_wav)
         return actual
 
     tempo = min(ratio, max_speedup)
 
-    # FFmpeg এর atempo একবারে 0.5-2.0 পর্যন্ত পারে, তাই দরকার হলে চেইন করি
+    # atempo handles 0.5-2.0 per instance, so chain filters for larger factors
     filters, remaining = [], tempo
     while remaining > 2.0:
         filters.append("atempo=2.0")
@@ -282,11 +286,11 @@ def fit_to_slot(in_wav, out_wav, slot_seconds, max_speedup=1.6):
 
 def build_timeline(pieces, total_seconds, out_wav):
     """
-    প্রতিটি ডাব করা সেগমেন্টকে তার সঠিক সময়ে বসিয়ে একটা পূর্ণ ট্র্যাক বানায়।
-    ফাঁকা জায়গাগুলো নীরবতা দিয়ে ভরাট হয়।
+    Place every dubbed segment at its exact offset on a single track.
+    Gaps between segments become silence.
     """
     if not pieces:
-        raise DubError("বসানোর মতো কোনো অডিও নেই।")
+        raise DubError("No audio segments to place.")
 
     inputs, filters, labels = [], [], []
     for idx, piece in enumerate(pieces):
@@ -300,7 +304,7 @@ def build_timeline(pieces, total_seconds, out_wav):
              + f"amix=inputs={len(pieces)}:normalize=0:dropout_transition=0[mixed];"
              + "[mixed]alimiter=limit=0.95,apad[out]")
 
-    # দৈর্ঘ্য `-t` দিয়ে কাটা হয় (ফিল্টারের ভেতর atrim দিলে ffmpeg আটকে যেতে পারে)
+    # Trim with `-t` rather than an atrim filter — atrim after apad can hang
     _run(["ffmpeg", "-y", *inputs, "-filter_complex", graph,
           "-map", "[out]", "-t", f"{max(total_seconds, 0.5):.3f}",
           "-ar", str(TTS_SAMPLE_RATE), "-ac", "2", str(out_wav)])
@@ -310,9 +314,13 @@ def build_timeline(pieces, total_seconds, out_wav):
 def mux_final(video_path, dub_wav, out_video, keep_background=True,
               background_volume=0.12):
     """
-    ডাব ট্র্যাক ভিডিওর সাথে জোড়া।
-    keep_background: আসল অডিও খুব নিচু ভলিউমে রাখে যাতে মিউজিক/সাউন্ড হারিয়ে না যায়।
-    ভিডিও রি-এনকোড হয় না (-c:v copy) — তাই দ্রুত আর কোয়ালিটি অক্ষত।
+    Attach the dubbed track to the video.
+
+    keep_background: duck the original audio underneath instead of discarding
+    it, so music and sound effects survive.
+
+    The video stream is copied, not re-encoded (-c:v copy), which keeps this
+    fast and visually lossless.
     """
     if keep_background:
         graph = (f"[0:a]volume={background_volume}[bg];"
@@ -330,7 +338,7 @@ def mux_final(video_path, dub_wav, out_video, keep_background=True,
     try:
         _run(cmd)
     except DubError:
-        # কিছু ফরম্যাটে stream copy কাজ করে না — তখন রি-এনকোড
+        # Some containers reject stream copy — fall back to re-encoding
         cmd[cmd.index("copy")] = "libx264"
         cmd.insert(-1, "-preset")
         cmd.insert(-1, "veryfast")
@@ -339,7 +347,7 @@ def mux_final(video_path, dub_wav, out_video, keep_background=True,
 
 
 def write_srt(segments, path):
-    """বোনাস: ডাব করা টেক্সটের সাবটাইটেল ফাইল।"""
+    """Write the dubbed script out as a subtitle file."""
     def stamp(sec):
         ms = int(round(sec * 1000))
         h, ms = divmod(ms, 3600000)
@@ -360,7 +368,10 @@ def write_srt(segments, path):
 def dub_video(video_path, out_video, target_lang="bn", voice=DEFAULT_VOICE,
               keep_background=True, progress=None):
     """
-    পুরো পাইপলাইন। progress(percent, message) কলব্যাক দিয়ে অগ্রগতি জানায়।
+    Run the full pipeline.
+
+    progress: optional callback receiving (percent, message).
+    Returns a dict with the output paths, the script and the duration.
     """
     def report(pct, msg):
         if progress:
@@ -370,15 +381,15 @@ def dub_video(video_path, out_video, target_lang="bn", voice=DEFAULT_VOICE,
     work = Path(tempfile.mkdtemp(prefix="dub_"))
 
     try:
-        report(5, "ভিডিও থেকে অডিও আলাদা করা হচ্ছে...")
+        report(5, "Extracting audio...")
         source_wav = extract_audio(video_path, work / "source.wav")
         total = media_duration(video_path)
 
-        report(15, "কথা শোনা ও অনুবাদ করা হচ্ছে...")
+        report(15, "Transcribing and translating...")
         segments = transcribe_and_translate(source_wav, target_lang,
                                             log=lambda m: report(20, m))
 
-        report(30, f"{len(segments)} টি সেগমেন্টের ভয়েস তৈরি হচ্ছে...")
+        report(30, f"Synthesizing {len(segments)} segments...")
         pieces = []
         for idx, seg in enumerate(segments):
             raw = work / f"raw_{idx:04d}.wav"
@@ -387,28 +398,28 @@ def dub_video(video_path, out_video, target_lang="bn", voice=DEFAULT_VOICE,
             try:
                 synthesize_segment(seg["text"], voice, raw)
             except DubError:
-                continue  # একটা সেগমেন্ট ব্যর্থ হলে পুরো কাজ থামে না
+                continue  # one bad segment shouldn't sink the whole job
 
             slot = seg["end"] - seg["start"]
             fit_to_slot(raw, fitted, slot)
             pieces.append({"path": fitted, "start": seg["start"]})
 
             pct = 30 + int(50 * (idx + 1) / len(segments))
-            report(pct, f"ভয়েস তৈরি: {idx + 1}/{len(segments)}")
+            report(pct, f"Synthesizing: {idx + 1}/{len(segments)}")
 
         if not pieces:
-            raise DubError("কোনো ভয়েস তৈরি করা যায়নি।")
+            raise DubError("No audio could be synthesized.")
 
-        report(85, "অডিও ট্র্যাক সাজানো হচ্ছে...")
+        report(85, "Assembling the audio timeline...")
         dub_wav = build_timeline(pieces, total, work / "dub.wav")
 
-        report(92, "ভিডিওর সাথে জোড়া হচ্ছে...")
+        report(92, "Muxing with the video...")
         mux_final(video_path, dub_wav, out_video, keep_background)
 
         srt_path = Path(out_video).with_suffix(".srt")
         write_srt(segments, srt_path)
 
-        report(100, "সম্পন্ন!")
+        report(100, "Done!")
         return {"video": str(out_video), "srt": str(srt_path),
                 "segments": segments, "duration": total}
 
@@ -419,17 +430,18 @@ def dub_video(video_path, out_video, target_lang="bn", voice=DEFAULT_VOICE,
 if __name__ == "__main__":
     import argparse
 
-    ap = argparse.ArgumentParser(description="ভিডিও অটো-ডাবিং")
-    ap.add_argument("video", help="ইনপুট ভিডিও ফাইল")
-    ap.add_argument("-o", "--out", default="dubbed.mp4", help="আউটপুট ফাইল")
-    ap.add_argument("-l", "--lang", default="bn", help="টার্গেট ভাষা (bn/en/hi...)")
-    ap.add_argument("-v", "--voice", default=DEFAULT_VOICE, help="ভয়েসের নাম")
+    ap = argparse.ArgumentParser(description="Automatic video dubbing")
+    ap.add_argument("video", help="input video file")
+    ap.add_argument("-o", "--out", default="dubbed.mp4", help="output file")
+    ap.add_argument("-l", "--lang", default="bn",
+                    help="target language code (bn/en/hi/...)")
+    ap.add_argument("-v", "--voice", default=DEFAULT_VOICE, help="voice name")
     ap.add_argument("--no-bg", action="store_true",
-                    help="আসল ব্যাকগ্রাউন্ড অডিও বাদ দিন")
+                    help="discard the original background audio")
     args = ap.parse_args()
 
     result = dub_video(args.video, args.out, args.lang, args.voice,
                        keep_background=not args.no_bg,
                        progress=lambda p, m: print(f"[{p:3d}%] {m}", flush=True))
-    print(f"\n✅ তৈরি: {result['video']}")
-    print(f"📝 সাবটাইটেল: {result['srt']}")
+    print(f"\n✅ Created: {result['video']}")
+    print(f"📝 Subtitles: {result['srt']}")

@@ -1,10 +1,10 @@
 """
-Auto Dub — ওয়েব সার্ভার
-------------------------
-ইউটিউবের মতো: ভিডিও আপলোড করুন, বাকিটা নিজে থেকেই হবে।
+Auto Dub — web server
+---------------------
+Upload a video, everything else happens automatically.
 
-চালানো:  python3 app.py
-তারপর ব্রাউজারে:  http://localhost:8000
+Run:      python3 app.py
+Then go:  http://localhost:8000
 """
 
 import os
@@ -34,11 +34,12 @@ MAX_MB = int(os.environ.get("MAX_UPLOAD_MB", "500"))
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_MB * 1024 * 1024
 
-# জব স্টোর — প্রোডাকশনে Redis বা ডাটাবেস ব্যবহার করবেন
+# In-memory job store. Jobs are lost on restart — swap in Redis or a
+# database before running this in production.
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 
-# একসাথে কয়টা ভিডিও প্রসেস হবে
+# How many videos may be processed at the same time
 WORKER_LIMIT = threading.Semaphore(int(os.environ.get("CONCURRENCY", "2")))
 
 
@@ -51,9 +52,9 @@ def set_job(job_id, **fields):
 # ---------------------------------------------------------------- worker
 
 def process(job_id, video_path, lang, voice, keep_bg):
+    """Background worker: run the pipeline and record progress on the job."""
     with WORKER_LIMIT:
-        set_job(job_id, status="processing", percent=3,
-                message="শুরু হচ্ছে...")
+        set_job(job_id, status="processing", percent=3, message="Starting...")
         out_path = OUTPUTS / f"{job_id}.mp4"
 
         def progress(pct, msg):
@@ -64,7 +65,7 @@ def process(job_id, video_path, lang, voice, keep_bg):
                                voice=voice, keep_background=keep_bg,
                                progress=progress)
             set_job(job_id,
-                    status="done", percent=100, message="ডাবিং সম্পন্ন!",
+                    status="done", percent=100, message="Dubbing complete",
                     output=out_path.name,
                     srt=Path(result["srt"]).name,
                     segment_count=len(result["segments"]),
@@ -77,10 +78,9 @@ def process(job_id, video_path, lang, voice, keep_bg):
             set_job(job_id, status="error", message=str(exc))
         except Exception as exc:                      # noqa: BLE001
             traceback.print_exc()
-            set_job(job_id, status="error",
-                    message=f"অপ্রত্যাশিত সমস্যা: {exc}")
+            set_job(job_id, status="error", message=f"Unexpected error: {exc}")
         finally:
-            # আপলোড করা মূল ফাইল মুছে দেওয়া — ডিস্ক বাঁচে
+            # Drop the source upload once we're done — saves disk
             try:
                 Path(video_path).unlink(missing_ok=True)
             except OSError:
@@ -98,13 +98,14 @@ def index():
 
 @app.post("/upload")
 def upload():
+    """Accept a file, queue a job, return its id for polling."""
     file = request.files.get("video")
     if not file or not file.filename:
-        return jsonify(error="কোনো ফাইল নির্বাচন করা হয়নি।"), 400
+        return jsonify(error="No file was selected."), 400
 
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED:
-        return jsonify(error=f"এই ফরম্যাট সাপোর্ট করে না ({ext})।"), 400
+        return jsonify(error=f"Unsupported file type ({ext})."), 400
 
     job_id = uuid.uuid4().hex[:12]
     safe_name = secure_filename(file.filename) or f"video{ext}"
@@ -118,7 +119,7 @@ def upload():
     with JOBS_LOCK:
         JOBS[job_id] = {
             "id": job_id, "status": "queued", "percent": 0,
-            "message": "সারিতে অপেক্ষা করছে...",
+            "message": "Waiting in queue...",
             "filename": safe_name, "lang": lang, "voice": voice,
             "created_at": datetime.now().isoformat(),
         }
@@ -134,12 +135,13 @@ def status(job_id):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
     if not job:
-        return jsonify(error="জব পাওয়া যায়নি।"), 404
+        return jsonify(error="Job not found."), 404
     return jsonify(job)
 
 
 @app.get("/jobs")
 def jobs():
+    """Twenty most recent jobs, newest first."""
     with JOBS_LOCK:
         items = sorted(JOBS.values(), key=lambda j: j["created_at"],
                        reverse=True)[:20]
@@ -162,15 +164,15 @@ def file(name):
 
 @app.errorhandler(413)
 def too_large(_):
-    return jsonify(error=f"ফাইল খুব বড়। সর্বোচ্চ {MAX_MB} MB।"), 413
+    return jsonify(error=f"File is too large. Maximum is {MAX_MB} MB."), 413
 
 
 if __name__ == "__main__":
     if not os.environ.get("GEMINI_API_KEY"):
-        print("\n⚠️  GEMINI_API_KEY সেট করা নেই!")
-        print("   পান: https://aistudio.google.com/apikey")
-        print("   তারপর:  export GEMINI_API_KEY=আপনার_কী\n")
+        print("\n⚠️  GEMINI_API_KEY is not set!")
+        print("   Get one: https://aistudio.google.com/apikey")
+        print("   Then:    export GEMINI_API_KEY=your_key\n")
 
     port = int(os.environ.get("PORT", "8000"))
-    print(f"\n🎬 Auto Dub চালু:  http://localhost:{port}\n")
+    print(f"\n🎬 Auto Dub running at  http://localhost:{port}\n")
     app.run(host="0.0.0.0", port=port, threaded=True)
