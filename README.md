@@ -1,16 +1,34 @@
-# Auto Dub — ভিডিও অটো ডাবিং প্ল্যাটফর্ম
+# Auto Dub
 
-ইউটিউবের auto-dubbing এর মতো, কিন্তু আপনার নিজের। ভিডিও আপলোড করুন — বাংলায় (বা ১০টি ভাষার যেকোনোটিতে) ডাব হয়ে ফিরে আসবে।
+Self-hosted automatic video dubbing. Upload a video — get it back dubbed in Bengali (or 9 other languages), with subtitles.
+
+Like YouTube's auto-dubbing, but running on your own machine, with your own API key.
+
+```
+Upload  →  Transcribe  →  Translate  →  Synthesize  →  Time-fit  →  Dubbed MP4
+```
 
 ---
 
-## ৫ মিনিটে চালু করুন
+## Features
 
-### ১. API কী নিন (ফ্রি)
+- **Drop a file, walk away.** No editing, no manual timing, no cutting.
+- **10 languages** — Bengali, English, Hindi, Urdu, Arabic, Spanish, French, Indonesian, Portuguese, Japanese.
+- **Lip-sync aware.** Translations are constrained to fit the original timing, then micro-adjusted with tempo shifting.
+- **Keeps the music.** Original audio is ducked underneath instead of discarded, so background score and sound effects survive.
+- **Subtitles included.** A matching `.srt` is generated on every run.
+- **One API key.** Transcription, translation and speech all run on Gemini — nothing else to sign up for.
+- **Web UI and CLI.** Use whichever fits your workflow.
 
-https://aistudio.google.com/apikey — Google অ্যাকাউন্ট দিয়ে লগইন করে "Create API key" চাপুন।
+---
 
-### ২. FFmpeg ইনস্টল করুন
+## Quick start
+
+### 1. Get an API key (free)
+
+Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey), sign in with a Google account, and click **Create API key**.
+
+### 2. Install FFmpeg
 
 ```bash
 # Ubuntu / Debian
@@ -19,138 +37,182 @@ sudo apt update && sudo apt install -y ffmpeg
 # macOS
 brew install ffmpeg
 
-# Windows — https://ffmpeg.org/download.html থেকে নামিয়ে PATH এ যোগ করুন
+# Windows — download from ffmpeg.org/download.html and add it to PATH
 ```
 
-### ৩. কী সেট করে চালান
+### 3. Run it
 
 ```bash
+git clone https://github.com/ImranDev3/autodub.git
+cd autodub
+
 cp .env.example .env
-nano .env          # GEMINI_API_KEY এর জায়গায় আপনার কী বসান
+nano .env               # paste your key into GEMINI_API_KEY
 
 chmod +x run.sh
 ./run.sh
 ```
 
-ব্রাউজারে খুলুন: **http://localhost:8000**
+Open **http://localhost:8000**.
 
-> Windows এ `run.sh` এর বদলে:
-> ```
-> python -m venv venv
-> venv\Scripts\pip install -r requirements.txt
-> set GEMINI_API_KEY=your_key
-> venv\Scripts\python app.py
-> ```
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+python -m venv venv
+venv\Scripts\pip install -r requirements.txt
+$env:GEMINI_API_KEY = "your_key_here"
+venv\Scripts\python app.py
+```
+</details>
 
 ---
 
-## কমান্ড লাইন থেকেও চলে
-
-ওয়েব ইন্টারফেস ছাড়াই:
+## Command line
 
 ```bash
 export GEMINI_API_KEY=your_key
 
-python3 dubber.py video.mp4 -o dubbed.mp4              # বাংলায় ডাব
-python3 dubber.py video.mp4 -l hi -v Kore              # হিন্দি, নারী কণ্ঠ
-python3 dubber.py video.mp4 --no-bg                    # ব্যাকগ্রাউন্ড অডিও বাদ
+python3 dubber.py lecture.mp4 -o dubbed.mp4        # dub to Bengali
+python3 dubber.py lecture.mp4 -l hi -v Kore        # Hindi, female voice
+python3 dubber.py lecture.mp4 --no-bg              # drop the original audio bed
 ```
 
----
-
-## খরচ
-
-Gemini API তে ১০ মিনিটের ভিডিও ডাব করতে মোটামুটি **$০.১৫ – $০.৩০** (১৮–৩৫ টাকা)।
-
-Google AI Studio এ একটা **ফ্রি টিয়ার** আছে — দিনে কিছু সংখ্যক রিকোয়েস্ট বিনামূল্যে। শুরুতে টেস্ট করার জন্য যথেষ্ট, টাকা লাগবে না।
-
----
-
-## ফাইলগুলো কী কাজ করে
-
-| ফাইল | কাজ |
-|---|---|
-| `dubber.py` | মূল ইঞ্জিন — পুরো ডাবিং পাইপলাইন |
-| `app.py` | ওয়েব সার্ভার, আপলোড আর জব ম্যানেজমেন্ট |
-| `templates/index.html` | আপলোড পেজ (বাংলা UI) |
-| `templates/watch.html` | ফলাফল দেখার পেজ |
-| `test_pipeline.py` | টেস্ট — API কী ছাড়াই চলে |
-| `run.sh` | এক কমান্ডে সেটআপ + চালু |
+| Flag | Meaning | Default |
+|---|---|---|
+| `-o, --out` | Output file path | `dubbed.mp4` |
+| `-l, --lang` | Target language code | `bn` |
+| `-v, --voice` | Gemini voice name | `Charon` |
+| `--no-bg` | Discard original background audio | off |
 
 ---
 
-## কীভাবে কাজ করে
+## How it works
 
-```
-ভিডিও
-  │
-  ├─ ১. FFmpeg: অডিও আলাদা করে (16kHz mono)
-  │
-  ├─ ২. Gemini 2.5 Flash: অডিও শুনে টাইমস্ট্যাম্প সহ
-  │     বাংলা ডাবিং স্ক্রিপ্ট লেখে — এক কলেই
-  │     (ট্রান্সক্রিপশন আর অনুবাদ একসাথে = অর্ধেক খরচ)
-  │
-  ├─ ৩. Gemini TTS: প্রতিটি সেগমেন্টের ভয়েস তৈরি
-  │
-  ├─ ৪. FFmpeg atempo: প্রতিটি লাইন নিজের সময়ের ভেতর ফিট
-  │     (সর্বোচ্চ ১.৬x — এর বেশি হলে রোবটের মতো শোনায়)
-  │
-  ├─ ৫. FFmpeg: সব সেগমেন্ট সঠিক সময়ে বসিয়ে টাইমলাইন
-  │
-  └─ ৬. FFmpeg: ভিডিও + নতুন ভয়েস + নিচু ভলিউমের আসল অডিও
-        → চূড়ান্ত MP4 (ভিডিও রি-এনকোড হয় না, তাই দ্রুত)
-```
+| # | Stage | Tool |
+|---|---|---|
+| 1 | Extract audio from video (16 kHz mono) | FFmpeg |
+| 2 | Transcribe with timestamps **and** translate, in a single call | Gemini 2.5 Flash |
+| 3 | Synthesize speech for each segment | Gemini TTS |
+| 4 | Fit each segment into its original time slot | FFmpeg `atempo` |
+| 5 | Assemble segments onto a timeline at their exact offsets | FFmpeg |
+| 6 | Mux dubbed track over the ducked original, copy video stream | FFmpeg |
 
-**সিঙ্ক কীভাবে ঠিক থাকে:** AI কে বলা হয়েছে অনুবাদ এমনভাবে করতে যাতে একই সময়ের ভেতর বলা যায়। তারপরও লম্বা হলে সামান্য স্পিড বাড়ানো হয়। দুইটা মিলে ঠোঁটের সাথে মোটামুটি মেলে।
+### Two design decisions worth knowing
+
+**Timing is solved in two layers.** Spoken Bengali typically runs longer than the same sentence in English, which is what usually wrecks dubbing sync. The model is instructed to write translations that are *sayable within the original slot* — trimming filler while preserving meaning and tone. Whatever overflow remains is absorbed by tempo shifting, capped at 1.6× so speech never turns robotic.
+
+**Transcription and translation share one API call.** Asking the model to listen and translate in a single pass — instead of transcribing, then sending the text back for translation — roughly halves both cost and latency.
+
+The video stream is copied rather than re-encoded (`-c:v copy`), so output is fast and visually lossless.
 
 ---
 
-## সেটিংস বদলানো
+## Cost
 
-`.env` ফাইলে:
+Roughly **$0.15–$0.30 per 10 minutes** of video on Gemini's paid tier.
+
+Google AI Studio also has a **free tier** with a daily request allowance — enough to test with and often enough for light personal use, at no cost.
+
+---
+
+## Configuration
+
+**`.env`**
 
 ```bash
-PORT=8000              # কোন পোর্টে চলবে
-MAX_UPLOAD_MB=500      # সর্বোচ্চ ফাইল সাইজ
-CONCURRENCY=2          # একসাথে কয়টা ভিডিও প্রসেস হবে
+GEMINI_API_KEY=...     # required
+PORT=8000              # server port
+MAX_UPLOAD_MB=500      # upload size limit
+CONCURRENCY=2          # videos processed simultaneously
 ```
 
-`dubber.py` এর উপরে:
+**`dubber.py`** — constants near the top:
 
-- `LANGUAGES` — নতুন ভাষা যোগ করুন
-- `VOICES` — ভয়েস অপশন (Gemini এ ৩০টি ভয়েস আছে)
-- `max_speedup=1.6` — স্পিড সীমা
-- `background_volume=0.12` — আসল অডিও কত জোরে থাকবে
+| Setting | Purpose |
+|---|---|
+| `LANGUAGES` | Add or remove target languages |
+| `VOICES` | Voice presets (Gemini offers 30 prebuilt voices) |
+| `max_speedup=1.6` | Ceiling on tempo compression |
+| `background_volume=0.12` | How loud the original audio sits under the dub |
+| `TRANSCRIBE_PROMPT` | Translation instructions — edit this to tune terminology, register, or domain |
 
 ---
 
-## সমস্যা হলে
+## Project layout
 
-| সমস্যা | সমাধান |
-|---|---|
-| `GEMINI_API_KEY সেট করা নেই` | `.env` ফাইলে কী বসিয়েছেন কিনা দেখুন |
-| `FFmpeg ব্যর্থ` | `ffmpeg -version` চালিয়ে দেখুন ইনস্টল আছে কিনা |
-| `HTTP 429` | ফ্রি টিয়ারের লিমিট শেষ — কিছুক্ষণ পর চেষ্টা করুন বা বিলিং চালু করুন |
-| ভয়েস আর ঠোঁট মেলে না | `.env` এ ভিডিওর মূল ভাষা ঠিক আছে কিনা দেখুন; খুব দ্রুত কথা বলা ভিডিওতে সিঙ্ক কঠিন |
-| অনুবাদ ভুল | `dubber.py` এর `TRANSCRIBE_PROMPT` এ আপনার বিষয়ের নির্দেশনা যোগ করুন |
+```
+autodub/
+├── dubber.py            core pipeline — also runnable as a CLI
+├── app.py               Flask server, upload handling, job queue
+├── templates/
+│   ├── index.html       upload page with live progress
+│   └── watch.html       playback page
+├── test_pipeline.py     14 tests, no API key required
+├── requirements.txt
+├── run.sh               setup + launch in one command
+└── .env.example
+```
 
-টেস্ট চালিয়ে দেখুন সব ঠিক আছে কিনা (API কী লাগে না):
+---
+
+## Tests
+
+The FFmpeg half of the pipeline is covered by tests that run offline, against a synthetic video:
 
 ```bash
 python3 test_pipeline.py
 ```
 
+```
+✅ sample video created
+✅ audio extracted (16 kHz mono)
+✅ duration probed
+✅ long audio fitted to slot
+✅ short audio left untouched
+✅ speedup ceiling respected
+✅ timeline assembled
+✅ muxed with background
+✅ muxed without background
+✅ output has both streams
+✅ subtitles written
+✅ JSON fence stripped
+✅ web page loads
+✅ unknown job returns 404
+```
+
+The Gemini-dependent stages need a real API key and are not covered.
+
 ---
 
-## পরের ধাপ (চাইলে)
+## Troubleshooting
 
-- **ভয়েস ক্লোনিং** — আসল স্পিকারের গলার মতো। ElevenLabs API লাগবে, খরচ ৫–১০ গুণ বেশি
-- **একাধিক স্পিকার** — স্ক্রিপ্টে `speaker` ফিল্ড আছে, প্রতিটি স্পিকারকে আলাদা ভয়েস দেওয়া যায়
-- **ব্যাকগ্রাউন্ড আলাদা করা** — Demucs দিয়ে মিউজিক আর কণ্ঠ পুরোপুরি আলাদা করলে কোয়ালিটি অনেক ভালো হয়
-- **ইউজার অ্যাকাউন্ট + ডাটাবেস** — এখন জব মেমরিতে থাকে, সার্ভার রিস্টার্ট হলে মুছে যায়। প্রোডাকশনে PostgreSQL + Redis/Celery ব্যবহার করুন
+| Symptom | Fix |
+|---|---|
+| `GEMINI_API_KEY is not set` | Check that `.env` exists and contains your key |
+| `FFmpeg failed` | Run `ffmpeg -version` to confirm it's installed and on PATH |
+| `HTTP 429` | Free-tier quota exhausted — wait, or enable billing |
+| Dub drifts out of sync | Common with fast, densely-spoken source audio. Lower `max_speedup` and let segments overrun slightly, or split the video |
+| Terminology mistranslated | Add domain instructions to `TRANSCRIBE_PROMPT` (e.g. "keep technical terms in English") |
+| Jobs vanish after restart | Expected — jobs live in memory. See below |
 
 ---
 
-## আইনি সতর্কতা
+## Roadmap
 
-অন্যের কপিরাইটেড ভিডিও ডাব করে পুনঃপ্রকাশ করা কপিরাইট লঙ্ঘন হতে পারে। নিজের ভিডিও, অনুমতি নেওয়া কনটেন্ট, বা লাইসেন্স-মুক্ত ভিডিওতে ব্যবহার করুন।
+- **Voice cloning** — match the original speaker's voice via ElevenLabs (5–10× the cost)
+- **Per-speaker voices** — the script already carries a `speaker` field; wire distinct voices to each
+- **Proper source separation** — Demucs to fully isolate vocals from music before dubbing
+- **Persistence** — jobs are currently in-memory and lost on restart; production use wants PostgreSQL + Celery/Redis
+
+---
+
+## A note on copyright
+
+Dubbing and republishing someone else's video can infringe copyright. Use this on your own content, material you have permission for, licensed content, or for personal and educational purposes.
+
+---
+
+## License
+
+MIT
