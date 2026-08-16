@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ job.filename }} — Auto Dub</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  body{background:#0b0d10;color:#e8ecf1;font-family:'Noto Sans Bengali',system-ui,sans-serif;
+    margin:0;padding:40px 6%;line-height:1.6}
+  .wrap{max-width:820px;margin:0 auto}
+  a{color:#3ddc97}
+  h1{font-size:20px;margin:0 0 4px}
+  p.meta{color:#8b96a5;font-size:13.5px;margin:0 0 20px}
+  video{width:100%;border-radius:12px;background:#000;display:block}
+  .actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+  .btn{flex:1;min-width:130px;text-align:center;text-decoration:none;padding:12px;
+    border-radius:10px;font-size:14px;font-weight:600;border:1px solid #262d36;
+    color:#e8ecf1;background:#1b2027}
+  .btn.primary{background:#3ddc97;color:#06231a;border-color:#3ddc97}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>{{ job.filename }}</h1>
+  <p class="meta">{{ job.segment_count }} টি সেগমেন্ট · ভয়েস: {{ job.voice }}</p>
+  <video controls playsinline src="/file/{{ job.output }}">
+    <track kind="subtitles" srclang="{{ job.lang }}" src="/file/{{ job.srt }}" default>
+  </video>
+  <div class="actions">
+    <a class="btn primary" href="/file/{{ job.output }}" download>ভিডিও ডাউনলোড</a>
+    <a class="btn" href="/file/{{ job.srt }}" download>সাবটাইটেল</a>
+    <a class="btn" href="/">নতুন ডাবিং</a>
+  </div>
+</div>
+</body>
+</html>

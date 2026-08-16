@@ -1,0 +1,20 @@
+# গোপন তথ্য — কখনো কমিট করবেন না
+.env
+
+# পাইথন
+venv/
+__pycache__/
+*.pyc
+
+# রানটাইম ফাইল
+uploads/
+outputs/
+work/
+*.mp4
+*.mkv
+*.webm
+*.wav
+*.srt
+
+# সিস্টেম
+.DS_Store

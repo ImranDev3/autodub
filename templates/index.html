@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auto Dub — ভিডিও অটো ডাবিং</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#14181d; --panel-2:#1b2027; --line:#262d36;
+    --text:#e8ecf1; --muted:#8b96a5; --accent:#3ddc97; --accent-dim:#1d5c46;
+    --danger:#ff6b6b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text); min-height:100vh;
+    font-family:'Noto Sans Bengali','Inter',system-ui,sans-serif;
+    font-size:15px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:860px; margin:0 auto; padding:0 6%}
+
+  header{
+    border-bottom:1px solid var(--line); padding:20px 0;
+    position:sticky; top:0; background:rgba(11,13,16,.85);
+    backdrop-filter:blur(12px); z-index:10;
+  }
+  header .wrap{display:flex; align-items:center; gap:12px}
+  .logo{
+    width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
+    background:linear-gradient(140deg,var(--accent),#2aa8c9); color:#06231a;
+    font-weight:700; font-size:17px; flex-shrink:0;
+  }
+  .brand{font-weight:700; font-size:17px; letter-spacing:-.01em}
+  .brand span{color:var(--muted); font-weight:400; font-size:13px; margin-left:8px}
+
+  .hero{padding:56px 0 32px; text-align:center}
+  .hero h1{
+    font-size:clamp(28px,5vw,42px); font-weight:700; line-height:1.25;
+    letter-spacing:-.02em; margin-bottom:14px;
+  }
+  .hero h1 em{font-style:normal; color:var(--accent)}
+  .hero p{color:var(--muted); font-size:16px; max-width:480px; margin:0 auto}
+
+  /* ---------- upload ---------- */
+  .drop{
+    border:2px dashed var(--line); border-radius:16px; background:var(--panel);
+    padding:46px 24px; text-align:center; cursor:pointer;
+    transition:border-color .18s, background .18s;
+  }
+  .drop:hover,.drop.over{border-color:var(--accent); background:var(--panel-2)}
+  .drop .icon{font-size:38px; display:block; margin-bottom:12px}
+  .drop strong{display:block; font-size:17px; font-weight:600; margin-bottom:6px}
+  .drop small{color:var(--muted); font-size:13px}
+  input[type=file]{display:none}
+
+  .picked{
+    display:none; align-items:center; gap:12px; margin-top:14px;
+    background:var(--panel-2); border:1px solid var(--line);
+    border-radius:11px; padding:13px 16px; font-size:14px;
+  }
+  .picked.show{display:flex}
+  .picked .name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .picked .size{color:var(--muted); font-size:13px}
+  .picked button{
+    background:none;border:none;color:var(--muted);cursor:pointer;
+    font-size:19px;line-height:1;padding:0 2px
+  }
+  .picked button:hover{color:var(--danger)}
+
+  /* ---------- options ---------- */
+  .options{
+    display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:20px;
+  }
+  @media(max-width:560px){.options{grid-template-columns:1fr}}
+  label.field{display:block}
+  label.field span{
+    display:block; font-size:12px; font-weight:600; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.07em; margin-bottom:7px;
+  }
+  select{
+    width:100%; background:var(--panel); color:var(--text);
+    border:1px solid var(--line); border-radius:10px; padding:12px 13px;
+    font-family:inherit; font-size:14.5px; cursor:pointer;
+  }
+  select:focus{outline:none; border-color:var(--accent)}
+
+  .toggle{
+    display:flex; align-items:center; gap:11px; margin-top:16px;
+    padding:14px 16px; background:var(--panel); border:1px solid var(--line);
+    border-radius:11px; cursor:pointer; font-size:14px;
+  }
+  .toggle input{accent-color:var(--accent); width:17px; height:17px; cursor:pointer}
+  .toggle small{display:block; color:var(--muted); font-size:12.5px; margin-top:2px}
+
+  .go{
+    width:100%; margin-top:20px; padding:16px;
+    background:var(--accent); color:#06231a; border:none; border-radius:12px;
+    font-family:inherit; font-size:16px; font-weight:700; cursor:pointer;
+    transition:opacity .15s, transform .1s;
+  }
+  .go:hover:not(:disabled){opacity:.9}
+  .go:active:not(:disabled){transform:translateY(1px)}
+  .go:disabled{opacity:.35; cursor:not-allowed}
+
+  /* ---------- progress ---------- */
+  .stage{display:none; margin-top:26px}
+  .stage.show{display:block}
+  .card{
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:16px; padding:26px;
+  }
+  .bar{height:7px; background:var(--panel-2); border-radius:99px; overflow:hidden; margin:16px 0 12px}
+  .bar i{
+    display:block; height:100%; width:0%; border-radius:99px;
+    background:linear-gradient(90deg,var(--accent),#2aa8c9);
+    transition:width .5s cubic-bezier(.4,0,.2,1);
+  }
+  .bar.indeterminate i{
+    width:35% !important; animation:slide 1.4s ease-in-out infinite;
+  }
+  @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
+  .status{display:flex; justify-content:space-between; align-items:baseline; gap:12px}
+  .status .msg{font-size:15px; font-weight:500}
+  .status .pct{font-variant-numeric:tabular-nums; color:var(--accent); font-weight:700}
+  .hint{color:var(--muted); font-size:13px; margin-top:10px}
+
+  .error{
+    border-color:#4a2020; background:#1c1113;
+  }
+  .error .msg{color:var(--danger)}
+
+  /* ---------- result ---------- */
+  video{width:100%; border-radius:12px; display:block; background:#000}
+  .actions{display:flex; gap:10px; margin-top:16px; flex-wrap:wrap}
+  .btn{
+    flex:1; min-width:130px; text-align:center; text-decoration:none;
+    padding:12px 16px; border-radius:10px; font-size:14px; font-weight:600;
+    border:1px solid var(--line); color:var(--text); background:var(--panel-2);
+    cursor:pointer; font-family:inherit; transition:border-color .15s;
+  }
+  .btn:hover{border-color:var(--accent)}
+  .btn.primary{background:var(--accent); color:#06231a; border-color:var(--accent)}
+
+  .script{margin-top:22px; border-top:1px solid var(--line); padding-top:20px}
+  .script h3{font-size:13px; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--muted); margin-bottom:14px}
+  .line{display:flex; gap:14px; padding:10px 0; border-bottom:1px solid var(--line)}
+  .line:last-child{border-bottom:none}
+  .line .t{
+    color:var(--accent); font-size:12.5px; font-variant-numeric:tabular-nums;
+    flex-shrink:0; width:52px; padding-top:2px;
+  }
+  .line .txt p{font-size:14.5px}
+  .line .txt small{color:var(--muted); font-size:12.5px; display:block; margin-top:3px}
+
+  /* ---------- steps ---------- */
+  .steps{margin:56px 0 40px; border-top:1px solid var(--line); padding-top:36px}
+  .steps h2{font-size:15px; font-weight:600; margin-bottom:20px; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.07em}
+  .steps ol{list-style:none; display:grid; gap:2px}
+  .steps li{display:flex; gap:15px; padding:12px 0; align-items:flex-start}
+  .steps .n{
+    width:25px;height:25px;border-radius:50%;background:var(--panel-2);
+    color:var(--accent);display:grid;place-items:center;font-size:12.5px;
+    font-weight:700;flex-shrink:0;border:1px solid var(--line)
+  }
+  .steps b{font-weight:600; font-size:14.5px}
+  .steps p{color:var(--muted); font-size:13.5px}
+
+  footer{border-top:1px solid var(--line); padding:24px 0 40px;
+    color:var(--muted); font-size:13px; text-align:center}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="logo">◉</div>
+    <div class="brand">Auto Dub <span>ভিডিও অটো ডাবিং</span></div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <h1>ভিডিও আপলোড করুন।<br><em>বাকিটা নিজে থেকেই হবে।</em></h1>
+    <p>যেকোনো ভাষার ভিডিও দিন — বাংলায় ডাব হয়ে ফিরে আসবে। কোনো এডিটিং নয়, কোনো ঝামেলা নয়।</p>
+  </section>
+
+  <!-- ধাপ ১: আপলোড -->
+  <section id="uploadStage">
+    <div class="drop" id="drop">
+      <span class="icon">🎬</span>
+      <strong>ভিডিও ফাইল টেনে আনুন</strong>
+      <small>অথবা ক্লিক করে বেছে নিন · MP4, MOV, MKV, WEBM · সর্বোচ্চ {{ max_mb }} MB</small>
+    </div>
+    <input type="file" id="fileInput" accept="video/*,audio/*">
+
+    <div class="picked" id="picked">
+      <span>📄</span>
+      <span class="name" id="pickedName"></span>
+      <span class="size" id="pickedSize"></span>
+      <button type="button" id="clearFile" title="বাদ দিন">×</button>
+    </div>
+
+    <div class="options">
+      <label class="field">
+        <span>কোন ভাষায় ডাব হবে</span>
+        <select id="lang">
+          {% for code, name in languages.items() %}
+          <option value="{{ code }}" {% if code=='bn' %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>ভয়েস</span>
+        <select id="voice">
+          {% for key, name in voices.items() %}
+          <option value="{{ name }}" {% if name==default_voice %}selected{% endif %}>{{ key.replace('_',' ')|title }} — {{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <label class="toggle">
+      <input type="checkbox" id="keepBg" checked>
+      <div>
+        ব্যাকগ্রাউন্ড মিউজিক রাখুন
+        <small>আসল অডিও নিচু ভলিউমে থাকবে, মিউজিক আর সাউন্ড এফেক্ট হারাবে না</small>
+      </div>
+    </label>
+
+    <button class="go" id="goBtn" disabled>ডাবিং শুরু করুন</button>
+  </section>
+
+  <!-- ধাপ ২: প্রসেসিং -->
+  <section class="stage" id="progressStage">
+    <div class="card" id="progressCard">
+      <div class="status">
+        <span class="msg" id="progressMsg">শুরু হচ্ছে...</span>
+        <span class="pct" id="progressPct">0%</span>
+      </div>
+      <div class="bar" id="progressBar"><i></i></div>
+      <p class="hint" id="progressHint">১০ মিনিটের ভিডিওতে সাধারণত ২–৪ মিনিট সময় লাগে। এই পেজ খোলা রাখুন।</p>
+    </div>
+  </section>
+
+  <!-- ধাপ ৩: ফলাফল -->
+  <section class="stage" id="resultStage">
+    <div class="card">
+      <video id="resultVideo" controls playsinline></video>
+      <div class="actions">
+        <a class="btn primary" id="dlVideo" download>ভিডিও ডাউনলোড</a>
+        <a class="btn" id="dlSrt" download>সাবটাইটেল (.srt)</a>
+        <button class="btn" id="againBtn">আরেকটা ডাব করুন</button>
+      </div>
+      <div class="script" id="scriptBox">
+        <h3>ডাবিং স্ক্রিপ্ট (প্রথম কয়েকটি লাইন)</h3>
+        <div id="scriptLines"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="steps">
+    <h2>ভেতরে কী হয়</h2>
+    <ol>
+      <li><span class="n">1</span><div><b>অডিও আলাদা করা</b><p>ভিডিও থেকে শব্দ বের করে নেওয়া হয়</p></div></li>
+      <li><span class="n">2</span><div><b>কথা শোনা ও অনুবাদ</b><p>AI প্রতিটি বাক্য সময়সহ লিখে বাংলায় অনুবাদ করে — এমনভাবে যাতে একই সময়ে বলা যায়</p></div></li>
+      <li><span class="n">3</span><div><b>ভয়েস তৈরি</b><p>প্রতিটি বাক্যের জন্য স্বাভাবিক বাংলা ভয়েস বানানো হয়</p></div></li>
+      <li><span class="n">4</span><div><b>সময়ের সাথে মেলানো</b><p>প্রতিটি লাইন তার নিজের সময়ের ভেতর ফিট করা হয়, যাতে ঠোঁটের সাথে মেলে</p></div></li>
+      <li><span class="n">5</span><div><b>ভিডিওর সাথে জোড়া</b><p>নতুন ভয়েস আর ব্যাকগ্রাউন্ড মিউজিক মিশিয়ে চূড়ান্ত ভিডিও তৈরি</p></div></li>
+    </ol>
+  </section>
+
+</main>
+
+<footer>Auto Dub · নিজের সার্ভারে চলে · Gemini API দিয়ে চালিত</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+let file = null, timer = null;
+
+/* ---------- ফাইল বাছাই ---------- */
+const drop = $('drop'), input = $('fileInput');
+
+drop.onclick = () => input.click();
+['dragenter','dragover'].forEach(e =>
+  drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(e =>
+  drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', ev => {
+  if (ev.dataTransfer.files.length) setFile(ev.dataTransfer.files[0]);
+});
+input.onchange = () => input.files.length && setFile(input.files[0]);
+
+function setFile(f) {
+  file = f;
+  $('pickedName').textContent = f.name;
+  $('pickedSize').textContent = (f.size / 1048576).toFixed(1) + ' MB';
+  $('picked').classList.add('show');
+  $('goBtn').disabled = false;
+}
+
+$('clearFile').onclick = ev => {
+  ev.stopPropagation();
+  file = null; input.value = '';
+  $('picked').classList.remove('show');
+  $('goBtn').disabled = true;
+};
+
+/* ---------- আপলোড ও প্রসেস ---------- */
+$('goBtn').onclick = async () => {
+  if (!file) return;
+
+  const data = new FormData();
+  data.append('video', file);
+  data.append('lang', $('lang').value);
+  data.append('voice', $('voice').value);
+  data.append('keep_bg', $('keepBg').checked ? '1' : '0');
+
+  $('uploadStage').style.display = 'none';
+  $('progressStage').classList.add('show');
+  $('progressBar').classList.add('indeterminate');
+  $('progressMsg').textContent = 'ভিডিও আপলোড হচ্ছে...';
+
+  let res;
+  try {
+    res = await fetch('/upload', { method: 'POST', body: data }).then(r => r.json());
+  } catch (e) {
+    return showError('আপলোড ব্যর্থ হয়েছে। ইন্টারনেট সংযোগ দেখুন।');
+  }
+  if (res.error) return showError(res.error);
+
+  $('progressBar').classList.remove('indeterminate');
+  poll(res.job_id);
+};
+
+function poll(jobId) {
+  timer = setInterval(async () => {
+    let job;
+    try { job = await fetch('/status/' + jobId).then(r => r.json()); }
+    catch { return; }
+
+    $('progressMsg').textContent = job.message || '...';
+    $('progressPct').textContent = (job.percent || 0) + '%';
+    $('progressBar').querySelector('i').style.width = (job.percent || 0) + '%';
+
+    if (job.status === 'done')  { clearInterval(timer); showResult(job); }
+    if (job.status === 'error') { clearInterval(timer); showError(job.message); }
+  }, 1500);
+}
+
+function showResult(job) {
+  $('progressStage').classList.remove('show');
+  $('resultStage').classList.add('show');
+  $('resultVideo').src = '/file/' + job.output;
+  $('dlVideo').href = '/file/' + job.output;
+  $('dlSrt').href = '/file/' + job.srt;
+
+  const box = $('scriptLines');
+  box.innerHTML = '';
+  (job.preview || []).forEach(seg => {
+    const m = Math.floor(seg.start / 60), s = Math.floor(seg.start % 60);
+    const row = document.createElement('div');
+    row.className = 'line';
+    row.innerHTML = `<div class="t">${m}:${String(s).padStart(2,'0')}</div>
+      <div class="txt"><p></p><small></small></div>`;
+    row.querySelector('p').textContent = seg.text;
+    row.querySelector('small').textContent = seg.original;
+    box.appendChild(row);
+  });
+  $('scriptBox').style.display = (job.preview || []).length ? 'block' : 'none';
+}
+
+function showError(msg) {
+  $('progressStage').classList.add('show');
+  $('progressCard').classList.add('error');
+  $('progressBar').classList.remove('indeterminate');
+  $('progressBar').style.display = 'none';
+  $('progressMsg').textContent = msg;
+  $('progressPct').textContent = '';
+  $('progressHint').innerHTML =
+    '<button class="btn" onclick="location.reload()" style="margin-top:12px">আবার চেষ্টা করুন</button>';
+}
+
+$('againBtn').onclick = () => location.reload();
+</script>
+</body>
+</html>
